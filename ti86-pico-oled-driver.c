@@ -11,7 +11,6 @@
 
 // Forward declarations
 static void on_pio_irq(void);
-static void dio1_irq_cb(uint gpio, uint32_t events);
 
 // SPI Defines
 #define SPI_PORT spi0
@@ -281,7 +280,7 @@ void copy_input_to_output_buffer ()
     for (uint16_t yy = DISPLAY_HEIGHT; yy > 0; yy--) {
         uint16_t y = yy -1;
         int x_base = 0;
-        int NIBBLE_MSB_FIRST = 0;
+        bool nibble_msb_first = false;
 
         for (uint16_t ww = WORDS_PER_LINE; ww > 0; ww--) {
             uint16_t w = ww-1;
@@ -289,16 +288,16 @@ void copy_input_to_output_buffer ()
             
             for (int s = 0; s < 8; ++s) {
                 // Pick which 4-bit nibble to read
-                int nib_idx = NIBBLE_MSB_FIRST ? (7 - s) : s; // 7..0 or 0..7
+                int nib_idx = nibble_msb_first ? (7 - s) : s; // 7..0 or 0..7
                 uint8_t sample4 = (word >> (nib_idx * 4)) & 0xF;
 
                 // Write 4 pixels for this sample
                 // Pixel order along X for this sample uses BIT_TO_PIXEL mapping
                 int x = x_base + s * 4;
                 output_buffer[y][x] = ((sample4 >> BIT_TO_PIXEL[0]) & 1); // pixel #0
-                output_buffer[y][x + 1] = ((sample4 >> BIT_TO_PIXEL[1]) & 1); // pixel #0
-                output_buffer[y][x + 2] = ((sample4 >> BIT_TO_PIXEL[2]) & 1); // pixel #0
-                output_buffer[y][x + 3] = ((sample4 >> BIT_TO_PIXEL[3]) & 1); // pixel #0
+                output_buffer[y][x + 1] = ((sample4 >> BIT_TO_PIXEL[1]) & 1); // pixel #1
+                output_buffer[y][x + 2] = ((sample4 >> BIT_TO_PIXEL[2]) & 1); // pixel #2
+                output_buffer[y][x + 3] = ((sample4 >> BIT_TO_PIXEL[3]) & 1); // pixel #3
             }
 
             x_base += 8 * 4; // 8 samples * 4 pixels per sample = 32 pixels per word
@@ -310,50 +309,46 @@ void copy_input_to_output_buffer ()
 // Can be useful to know what is actually in the input buffer when there are display issues
 void debug_input_buffer_to_console ()
 {
-        // Display text of the buffer
-        for (uint16_t y = 0; y < DISPLAY_HEIGHT; y++) {
-            int x_base = 0;
-            int NIBBLE_MSB_FIRST = 1;
+    // Display text of the buffer
+    for (uint16_t y = 0; y < DISPLAY_HEIGHT; y++) {
+        bool nibble_msb_first = true;
 
-            for (uint16_t w = 0; w < WORDS_PER_LINE; w++) {
-                uint32_t word = frame_bits[y][w];
-                
-                for (int s = 0; s < 8; ++s) {
-                    // Pick which 4-bit nibble to read
-                    int nib_idx = NIBBLE_MSB_FIRST ? (7 - s) : s; // 7..0 or 0..7
-                    uint8_t sample4 = (word >> (nib_idx * 4)) & 0xF;
-
-                    // Write 4 pixels for this sample
-                    // Pixel order along X for this sample uses BIT_TO_PIXEL mapping
-                    int x = x_base + s * 4;
-                    if (sample4 >> BIT_TO_PIXEL[3] & 1) // pixel #3
-                        printf(".");
-                    else
-                        printf(" ");
-
-                    if (sample4 >> BIT_TO_PIXEL[2] & 1) // pixel #2
-                        printf(".");
-                    else
-                        printf(" ");
-
-                    if (sample4 >> BIT_TO_PIXEL[1] & 1) // pixel #1
-                        printf(".");
-                    else
-                        printf(" ");
-
-                    if (sample4 >> BIT_TO_PIXEL[0] & 1) // pixel #0
-                        printf(".");
-                    else
-                        printf(" ");
-                }
-
-                x_base += 8 * 4; // 8 samples * 4 pixels per sample = 32 pixels per word
-            }
+        for (uint16_t w = 0; w < WORDS_PER_LINE; w++) {
+            uint32_t word = frame_bits[y][w];
             
-            printf("\n");
-        }
+            for (int s = 0; s < 8; ++s) {
+                // Pick which 4-bit nibble to read
+                int nib_idx = nibble_msb_first ? (7 - s) : s; // 7..0 or 0..7
+                uint8_t sample4 = (word >> (nib_idx * 4)) & 0xF;
 
-        printf("----\n");
+                // Write 4 pixels for this sample
+                // Pixel order along X for this sample uses BIT_TO_PIXEL mapping
+                if (sample4 >> BIT_TO_PIXEL[3] & 1) // pixel #3
+                    printf(".");
+                else
+                    printf(" ");
+
+                if (sample4 >> BIT_TO_PIXEL[2] & 1) // pixel #2
+                    printf(".");
+                else
+                    printf(" ");
+
+                if (sample4 >> BIT_TO_PIXEL[1] & 1) // pixel #1
+                    printf(".");
+                else
+                    printf(" ");
+
+                if (sample4 >> BIT_TO_PIXEL[0] & 1) // pixel #0
+                    printf(".");
+                else
+                    printf(" ");
+            }
+        }
+        
+        printf("\n");
+    }
+
+    printf("----\n");
 }
 
 // -- Data Input Functions ----------------------------------------------------
@@ -414,7 +409,7 @@ int main()
     dma_channel_configure(dma_ch, &dmc,
                         frame_bits[0],          // dst
                         &pio->rxf[sm],          // src
-                        WORDS_PER_LINE,         // 5 words per line
+                        WORDS_PER_LINE,         // # words per line
                         false);                 // don't start
 
     // --- PIO interrupt setup ---
@@ -443,6 +438,6 @@ int main()
         display_buffer();
         
         // Uncomment to send text representation of the input buffer to the console
-        //debug_input_buffer_to_console();
+        // debug_input_buffer_to_console();
     }
 }
