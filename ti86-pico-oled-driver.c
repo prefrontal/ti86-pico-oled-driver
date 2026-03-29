@@ -80,9 +80,9 @@ static PIO pio = pio0;
 static uint sm;
 static int dma_ch;
 
+// Variables to hold and manage the incoming screen data
 static uint32_t frame_bits[DISPLAY_HEIGHT][WORDS_PER_LINE];
 static volatile uint current_line = 0;
-static volatile bool frame_sync_seen = false;
 
 // Output buffer where we store data that will be sent to the display
 static bool output_buffer[DISPLAY_HEIGHT][DISPLAY_WIDTH] = { false };
@@ -90,6 +90,7 @@ static bool output_buffer[DISPLAY_HEIGHT][DISPLAY_WIDTH] = { false };
 // ----------------------------------------------------------------------------
 // Hardware Initialization
 
+// Configure the pins that we use to read digital signals from the TI-86
 void initialize_input_pins ()
 {
     // Initialize the digital input bit pins
@@ -123,6 +124,8 @@ void initialize_input_pins ()
     gpio_set_dir(DISPLAY_INPUT_PIN_DIO1, GPIO_IN);
 }
 
+// Initialize the SPI bus so we can send data out to the new display
+// Different SPI implementations may require modifications to a different screen
 void initialize_spi ()
 {
     // Reset pin is pulled low to reset, so we'll initialise it to a driven-high state
@@ -185,6 +188,7 @@ void send_display_command(uint8_t c)
 
 }
 
+
 void send_display_data(uint8_t c) 
 {
     // SSD1309 needs CS to be low and CMD to be high for data
@@ -209,41 +213,16 @@ void initialize_display ()
     sleep_ms(10);
     gpio_put(PIN_RESET, 1);
 
-    // send_display_command(SSD1309_CMD_DISPLAY_OFF);
-
-    // send_display_command(SSD1309_CMD_COM_PINS_CONF);
-    // send_display_command(0x12);
-
+    // Configure the display how we want it set up
     send_display_command(SSD1309_CMD_NORMAL_DISPLAY);
     send_display_command(SSD1309_CMD_ENTIRE_DISPLAY_OFF);
-
-    // send_display_command(SSD1309_CMD_MULTIPLEX_RATIO);
-    // send_display_command(0x3F);
-    
-    // send_display_command(SSD1309_CMD_DISPLAY_CLOCK_DIVIDE);
-    // send_display_command(0xF0);
-
     send_display_command(SSD1309_CMD_MEMORY_ADDRESSING_MODE);
     send_display_command(0x00);
-    //send_display_command(SSD1309_CMD_COLUMN_0_MAPPED_TO_SEG0);
     send_display_command(SSD1309_CMD_SCAN_DIRECTION_COMN_1_START);
-    // send_display_command(SSD1309_CMD_COMH_DESLECT_LEVEL);
-
-    // ----
-    // send_display_command(SSD1309_CMD_DISPLAY_OFFSET);
-    // send_display_command(0x40);
-
-    // send_display_command(SSD1309_CMD_SET_COLUMN_ADDRESS);
-    // send_display_command(0x00);
-    // send_display_command(0x7F);
-    // send_display_command(SSD1309_CMD_SET_PAGE_ADDRESS);
-    // send_display_command(0x00);
-    // send_display_command(0x07);
-    
-    //send_display_command(SSD1309_CMD_DEACTIVATE_SCROLL);
     send_display_command(SSD1309_CMD_DISPLAY_ON);
 }
 
+// Send zeros to the display to clear the contents
 void display_clear ()
 {
     gpio_put(PIN_CHIP_SELECT, 1);
@@ -253,31 +232,24 @@ void display_clear ()
 
     uint8_t zeros = 0;
 
-    for (uint32_t i = 0; i < 1024; i++) {
+    for (uint32_t i = 0; i < ((DISPLAY_WIDTH * DISPLAY_HEIGHT) / 8); i++) {
         spi_write_blocking(SPI_PORT, &zeros, sizeof(zeros));
     }
 
     gpio_put(PIN_CHIP_SELECT, 1);
 }
 
-
+// Write the display buffer out to the OLED display using SPI
 void display_buffer ()
 {
-    // send_display_command(SSD1309_CMD_SET_COLUMN_ADDRESS);
-    // send_display_command(0x00);
-    // send_display_command(0x7F);
-    // send_display_command(SSD1309_CMD_SET_PAGE_ADDRESS);
-    // send_display_command(0x00);
-    // send_display_command(0x07);
-
     // Reset state and wait
     gpio_put(PIN_CHIP_SELECT, 1);
     gpio_put(PIN_COMMAND, 1);
     sleep_ms(1);
     gpio_put(PIN_CHIP_SELECT, 0);
 
-    for (uint16_t y = 0; y < 64; y=y+8) {
-        for (uint16_t x = 0; x < 128; x++) {
+    for (uint16_t y = 0; y < DISPLAY_HEIGHT; y=y+8) {
+        for (uint16_t x = 0; x < DISPLAY_WIDTH; x++) {
             uint8_t pixel_col = 0;
 
             pixel_col |= (output_buffer[y+0][x] << 0); // Shift b0 to the 0th position (LSB)
@@ -303,9 +275,9 @@ void display_buffer ()
 // If your wiring means the first pixel should be D4, then D3, D2, D1, use {3,2,1,0}.
 static const uint8_t BIT_TO_PIXEL[4] = { 0, 1, 2, 3 };
 
+// Get the data out of the input buffer (supplied by the PIO) and then write the data out to the new display
 void copy_input_to_output_buffer ()
 {
-    // We need to get the data out of the input buffer (supplied by the PIO) and then write the data out to the new display
     for (uint16_t yy = DISPLAY_HEIGHT; yy > 0; yy--) {
         uint16_t y = yy -1;
         int x_base = 0;
@@ -334,6 +306,8 @@ void copy_input_to_output_buffer ()
     }
 }
 
+// Send the input buffer to the console using text glyphs to display the screen
+// Can be useful to know what is actually in the input buffer when there are display issues
 void debug_input_buffer_to_console ()
 {
         // Display text of the buffer
@@ -352,17 +326,17 @@ void debug_input_buffer_to_console ()
                     // Write 4 pixels for this sample
                     // Pixel order along X for this sample uses BIT_TO_PIXEL mapping
                     int x = x_base + s * 4;
-                    if (sample4 >> BIT_TO_PIXEL[3] & 1) // pixel #0
+                    if (sample4 >> BIT_TO_PIXEL[3] & 1) // pixel #3
                         printf(".");
                     else
                         printf(" ");
 
-                    if (sample4 >> BIT_TO_PIXEL[2] & 1) // pixel #0
+                    if (sample4 >> BIT_TO_PIXEL[2] & 1) // pixel #2
                         printf(".");
                     else
                         printf(" ");
 
-                    if (sample4 >> BIT_TO_PIXEL[1] & 1) // pixel #0
+                    if (sample4 >> BIT_TO_PIXEL[1] & 1) // pixel #1
                         printf(".");
                     else
                         printf(" ");
@@ -386,11 +360,10 @@ void debug_input_buffer_to_console ()
 
 // PIO IRQ handler: triggered after each line (IRQ 0)
 static void on_pio_irq(void) {
-    //printf("New line interrupt\n");
+
     pio_interrupt_clear(pio, 0);
 
     if (++current_line >= DISPLAY_HEIGHT) {
-        // printf("Resetting line count\n");
         current_line = 0; // Frame complete
     }
 
@@ -400,61 +373,22 @@ static void on_pio_irq(void) {
     dma_channel_start(dma_ch);
 }
 
-static void on_pio_irq1(void) {
-    pio_interrupt_clear(pio, 1);
-    printf("IRQ1\n");
-}
-
-// Optional shift clock sync via SCP
-static void scp_irq_cb(uint gpio, uint32_t events) {
-    (void)gpio;
-    (void)events;
-    printf("SCP shift clock observed\n");
-}
-
-// Optional line sync via LP
-static void lp_irq_cb(uint gpio, uint32_t events) {
-    (void)gpio;
-    (void)events;
-    printf("LP frame sync observed\n");
-}
-
-// Optional frame sync via DIO1
-static void dio1_irq_cb(uint gpio, uint32_t events) {
-    (void)gpio;
-    (void)events;
-    //printf("DIO1 frame sync observed\n");
-    frame_sync_seen = true;
-}
-
+// -- Main Loop ---------------------------------------------------------------
 
 int main()
 {
     stdio_init_all();
-
     printf("Initial hardware configuration and init\n");
 
-    // Initialize inputs and outputs
-    initialize_input_pins(); // Data from the TI_86
-    initialize_spi(); // Data out to the display
-    initialize_display(); // Data to the OLED display
+    // Initialize inputs and outputs, get the display ready
+    initialize_input_pins();
+    initialize_spi();
+    initialize_display();
 
-    // ------------------------------------------------------------------------
-
-    printf("Setup 1\n");
-    // Optional: detect line start via SCP falling edge
-    //gpio_set_irq_enabled_with_callback(DISPLAY_INPUT_PIN_SCP, GPIO_IRQ_EDGE_FALL, true, &scp_irq_cb);
-    // Optional: detect line start via LP rising edge
-    //gpio_set_irq_enabled_with_callback(DISPLAY_INPUT_PIN_LP, GPIO_IRQ_EDGE_RISE, true, &lp_irq_cb);
-    // Optional: detect frame start via DIO1 rising edge
-    //gpio_set_irq_enabled_with_callback(DISPLAY_INPUT_PIN_DIO1, GPIO_IRQ_EDGE_RISE, true, &dio1_irq_cb);
-
-    printf("Setup 2\n");
     // --- Load and configure PIO program (do NOT enable yet) ---
     uint offset = pio_add_program(pio0, &display_input_program);
     sm = pio_claim_unused_sm(pio0, true);
 
-    printf("Setup 3\n");
     pio_sm_config sm_cfg = display_input_program_get_default_config(offset);
     sm_config_set_in_pins(&sm_cfg, DISPLAY_INPUT_PIN_D1);
     sm_config_set_in_shift(&sm_cfg, false, true, 32);   // autopush@32, 32-bit words
@@ -468,7 +402,6 @@ int main()
     pio_sm_clear_fifos(pio0, sm);
     pio_sm_restart(pio0, sm);
 
-    printf("Setup 4\n");
     // --- DMA: PIO RX FIFO → RAM buffer ---
     dma_ch = dma_claim_unused_channel(true);
     dma_channel_config dmc = dma_channel_get_default_config(dma_ch);
@@ -484,19 +417,12 @@ int main()
                         WORDS_PER_LINE,         // 5 words per line
                         false);                 // don't start
 
-    printf("Setup 5\n");
-    // --- (If you keep PIO IRQ) PIO interrupt setup ---
+    // --- PIO interrupt setup ---
     irq_set_exclusive_handler(PIO0_IRQ_0, on_pio_irq);
     irq_set_enabled(PIO0_IRQ_0, true);
     pio_set_irq0_source_enabled(pio0, pis_interrupt0, true);
 
-    // setup (choose IRQ 0 or 1 source depending on your core wiring)
-    // irq_set_exclusive_handler(PIO0_IRQ_1, on_pio_irq1);
-    // irq_set_enabled(PIO0_IRQ_1, true);
-    // pio_set_irq1_source_enabled(pio0, pis_interrupt1, true);
-
-    printf("Setup 6\n");
-    // --- Arm DMA *before* enabling the SM ---
+    // --- Arm DMA before enabling the SM ---
     current_line = 0;
     dma_channel_set_write_addr(dma_ch, frame_bits[current_line], false);
     dma_channel_set_trans_count(dma_ch, WORDS_PER_LINE, false);
@@ -515,7 +441,8 @@ int main()
         sleep_ms(100);
         copy_input_to_output_buffer();
         display_buffer();
-
+        
+        // Uncomment to send text representation of the input buffer to the console
         //debug_input_buffer_to_console();
     }
 }
