@@ -1,0 +1,39 @@
+.program display_input
+; ---------------------------------------------------------
+; Reads 4-bit parallel data (D1–D4) on each falling edge of SCP.
+; Waits for LP high (new line start), captures 32 samples × 4 bits = 128 bits.
+; Raises IRQ 0 after each line.
+;
+; Host (C code) must:
+;   - Set IN base to D1 (lowest-numbered of D1..D4, consecutive pins)
+;   - Enable autopush with threshold = 32 bits
+;   - Configure shift direction as needed
+; ---------------------------------------------------------
+
+.define SCP_PIN  4   ; Shift clock pulse (sample when LOW)
+.define LP_PIN   5   ; Latch pulse (start of line)
+.define DIO_PIN  6  ; Frame pulse
+
+.wrap_target
+start:
+    wait 1 pin DIO_PIN
+    jmp start_line
+
+wait_lp_high:
+    wait 0 pin LP_PIN     ; ensure we observe a fresh rising edge
+    wait 1 pin LP_PIN     ; Wait for LP to go HIGH (start-of-line)
+    wait 0 pin LP_PIN     ; ensure we observe a fresh rising edge
+
+start_line:
+    set y, 31             ; 32 samples per line
+
+sample_loop:
+    wait 0 pin SCP_PIN    ; Wait for SCP falling edge
+    in pins, 4            ; Read 4 bits (D1..D4)
+    wait 1 pin SCP_PIN    ; Wait for SCP to return HIGH
+    jmp y--, sample_loop
+
+line_done:
+    irq 0                 ; Signal to host: one line complete
+    jmp wait_lp_high
+.wrap
